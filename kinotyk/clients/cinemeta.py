@@ -57,7 +57,16 @@ class CinemetaClient:
             extras.append(f"skip={skip}")
 
         suffix = f"/{'&'.join(extras)}" if extras else ""
-        url = f"{self.base_url}/catalog/movie/top{suffix}.json"
+        return await self._fetch_metas(f"{self.base_url}/catalog/movie/top{suffix}.json")
+
+    async def search(self, query: str) -> list[MovieCandidate]:
+        cleaned = query.strip()
+        if not cleaned:
+            return []
+        url = f"{self.base_url}/catalog/movie/top/search={quote(cleaned, safe='')}.json"
+        return await self._fetch_metas(url)
+
+    async def _fetch_metas(self, url: str) -> list[MovieCandidate]:
         data = await self._get_json(url)
         raw_metas = data.get("metas", [])
         if not isinstance(raw_metas, list):
@@ -109,6 +118,7 @@ class CinemetaClient:
             rating=_parse_rating(raw.get("imdbRating")),
             year=_parse_year(raw.get("releaseInfo") or raw.get("released")),
             genres=genres,
+            director=_parse_names(raw.get("director")),
         )
 
 
@@ -129,3 +139,13 @@ def _parse_year(value: object) -> int | None:
         return None
     match = _YEAR_RE.search(str(value))
     return int(match.group(0)) if match else None
+
+
+def _parse_names(value: object, *, limit: int = 2) -> str | None:
+    if isinstance(value, str):
+        cleaned = value.strip()
+        return cleaned or None
+    if not isinstance(value, list):
+        return None
+    names = [str(item).strip() for item in value if str(item).strip()]
+    return ", ".join(names[:limit]) or None

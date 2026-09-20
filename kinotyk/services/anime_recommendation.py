@@ -6,7 +6,7 @@ from collections import defaultdict
 
 from kinotyk.clients.shikimori import ShikimoriClient, ShikimoriError
 from kinotyk.db import Database
-from kinotyk.domain import Anime
+from kinotyk.domain import Anime, AnimeCandidate
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,12 @@ class AnimeRecommendationService:
         anime = await self.shikimori.get_anime(anime_id)
         self._cache[anime_id] = anime
         return anime
+
+    async def search(self, query: str) -> list[AnimeCandidate]:
+        cleaned = query.strip()
+        if not cleaned:
+            return []
+        return await self.shikimori.search(cleaned)
 
     async def recommend(self, telegram_id: int, genre_key: str) -> Anime | None:
         excluded = self.database.excluded_media_ids(telegram_id, "anime")

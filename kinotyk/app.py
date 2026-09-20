@@ -12,10 +12,13 @@ from kinotyk.domain import Anime, Movie
 from kinotyk.services.anime_recommendation import AnimeRecommendationService
 from kinotyk.services.recommendation import RecommendationService
 from kinotyk.ui import (
+    COLLECTION_LABELS,
     anime_caption,
+    anime_details_keyboard,
     anime_genres_keyboard,
     anime_genres_text,
     anime_keyboard,
+    anime_search_results_text,
     collection_keyboard,
     collection_page_keyboard,
     collection_page_text,
@@ -28,7 +31,17 @@ from kinotyk.ui import (
     media_collection_keyboard,
     media_collection_text,
     movie_caption,
+    movie_details_keyboard,
     movie_keyboard,
+    movie_search_results_text,
+    search_anime_keyboard,
+    search_cancel_keyboard,
+    search_media_keyboard,
+    search_media_text,
+    search_movie_keyboard,
+    search_no_results_text,
+    search_prompt_text,
+    search_results_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -49,6 +62,8 @@ class KinotykApp:
         self.recommendations = recommendations
         self.anime_recommendations = anime_recommendations
         self._tasks: set[asyncio.Task[Any]] = set()
+        self._awaiting_search: dict[int, str] = {}
+        self._pending_search: dict[int, str] = {}
 
     async def run(self) -> None:
         self.database.init()
@@ -108,6 +123,8 @@ class KinotykApp:
             )
         elif command == "/collection":
             await self._send_collection(chat_id, telegram_id)
+        elif command == "/search":
+            await self._start_search(chat_id, telegram_id, text)
         elif command == "/help":
             await self.telegram.send_message(
                 chat_id,
@@ -115,6 +132,11 @@ class KinotykApp:
                 reply_markup=main_menu_keyboard(),
             )
         else:
+            media_type = self._awaiting_search.get(telegram_id)
+            if media_type and text:
+                self._awaiting_search.pop(telegram_id, None)
+                await self._run_search(chat_id, telegram_id, media_type, text)
+                return
             await self.telegram.send_message(
                 chat_id,
                 main_menu_text(user.get("first_name")),
@@ -173,6 +195,40 @@ class KinotykApp:
             )
             return
 
+        if data == "menu:search":
+            await self.telegram.answer_callback_query(callback_id)
+            self._pending_search.pop(telegram_id, None)
+            self._awaiting_search.pop(telegram_id, None)
+            await self._replace_with_message(
+                chat_id,
+                message_id,
+                search_media_text(),
+                search_media_keyboard(),
+            )
+            return
+
+        if data in {"search:movie", "search:anime"}:
+            await self.telegram.answer_callback_query(callback_id)
+            await self._handle_search_choice(
+                chat_id,
+                telegram_id,
+                message_id,
+                data.split(":", 1)[1],
+            )
+            return
+
+        if data == "search:cancel":
+            self._pending_search.pop(telegram_id, None)
+            self._awaiting_search.pop(telegram_id, None)
+            await self.telegram.answer_callback_query(callback_id)
+            await self._replace_with_message(
+                chat_id,
+                message_id,
+                main_menu_text(user.get("first_name")),
+                main_menu_keyboard(),
+            )
+            return
+
         if data.startswith("genre:"):
             await self.telegram.answer_callback_query(callback_id)
             parts = data.split(":")
@@ -204,6 +260,15 @@ class KinotykApp:
                     )
                     return
 
+        if data.startswith("mvv:"):
+            await self._handle_movie_view(
+                callback_id,
+                chat_id,
+                message_id,
+                data,
+            )
+            return
+
         if data.startswith("mv:"):
             await self._handle_movie_action(
                 callback_id,
@@ -222,6 +287,33 @@ class KinotykApp:
                 message_id,
                 data,
             )
+            return
+
+        if data.startswith("anv:"):
+            await self._handle_anime_view(
+                callback_id,
+                chat_id,
+                message_id,
+                data,
+            )
+            return
+
+        if data.startswith("rmv:"):
+            await self._handle_media_remove(
+                callback_id,
+                chat_id,
+                telegram_id,
+                message_id,
+                data,
+            )
+            return
+
+        if data.startswith("smv:"):
+            await self._handle_search_movie_view(callback_id, chat_id, data)
+            return
+
+        if data.startswith("sav:"):
+            await self._handle_search_anime_view(callback_id, chat_id, data)
             return
 
         if data.startswith("media:"):
@@ -447,9 +539,13 @@ class KinotykApp:
             await self.telegram.delete_message(chat_id, old_message_id)
         await self._send_anime(chat_id, anime, genre_key)
 
-    async def _send_movie(self, chat_id: int, movie: Movie, genre_key: str) -> None:
+    async def _send_movie_details(
+        self,
+        chat_id: int,
+        movie: Movie,
+        markup: dict[str, Any],
+    ) -> None:
         caption = movie_caption(movie)
-        markup = movie_keyboard(movie, genre_key)
         if movie.poster_url:
             try:
                 await self.telegram.send_photo(
@@ -466,9 +562,286 @@ class KinotykApp:
                 )
         await self.telegram.send_message(chat_id, caption, reply_markup=markup)
 
-    async def _send_anime(self, chat_id: int, anime: Anime, genre_key: str) -> None:
+    async def _send_movie(self, chat_id: int, movie: Movie, genre_key: str) -> None:
+        await self._send_movie_details(chat_id, movie, movie_keyboard(movie, genre_key))
+
+    async def _handle_anime_view(
+        self,
+        callback_id: str,
+        chat_id: int,
+        message_id: int | None,
+        data: str,
+    ) -> None:
+        parts = data.split(":")
+        if len(parts) != 4:
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+        _, raw_id, collection, raw_offset = parts
+        try:
+            anime_id = int(raw_id)
+            offset = int(raw_offset)
+        except ValueError:
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+        if (
+            anime_id <= 0
+            or offset < 0
+            or collection not in {"watched", "favorite", "watchlist", "skipped"}
+        ):
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+
+        try:
+            anime = await self.anime_recommendations.get_anime(anime_id)
+        except (ShikimoriError, ValueError):
+            await self.telegram.answer_callback_query(
+                callback_id,
+                "Не смог загрузить аниме. Попробуй ещё раз.",
+                show_alert=True,
+            )
+            return
+        await self.telegram.answer_callback_query(callback_id)
+
+        if isinstance(message_id, int):
+            await self.telegram.delete_message(chat_id, message_id)
+        await self._send_anime_details(
+            chat_id,
+            anime,
+            anime_details_keyboard(raw_id, collection, offset),
+        )
+
+    async def _handle_movie_view(
+        self,
+        callback_id: str,
+        chat_id: int,
+        message_id: int | None,
+        data: str,
+    ) -> None:
+        parts = data.split(":")
+        if len(parts) != 4:
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+        _, imdb_id, collection, raw_offset = parts
+        try:
+            offset = int(raw_offset)
+        except ValueError:
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+        if (
+            offset < 0
+            or not imdb_id
+            or collection not in {"watched", "favorite", "watchlist", "skipped"}
+        ):
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+
+        try:
+            movie = await self.recommendations.get_movie(imdb_id)
+        except (CinemetaError, ValueError):
+            await self.telegram.answer_callback_query(
+                callback_id,
+                "Не смог загрузить фильм. Попробуй ещё раз.",
+                show_alert=True,
+            )
+            return
+        await self.telegram.answer_callback_query(callback_id)
+
+        if isinstance(message_id, int):
+            await self.telegram.delete_message(chat_id, message_id)
+        await self._send_movie_details(
+            chat_id,
+            movie,
+            movie_details_keyboard(imdb_id, collection, offset),
+        )
+
+    async def _handle_media_remove(
+        self,
+        callback_id: str,
+        chat_id: int,
+        telegram_id: int,
+        message_id: int | None,
+        data: str,
+    ) -> None:
+        parts = data.split(":")
+        if len(parts) != 5:
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+        _, media_type, external_id, collection, raw_offset = parts
+        try:
+            offset = int(raw_offset)
+        except ValueError:
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+        if (
+            media_type not in {"movie", "anime"}
+            or collection not in {"watched", "favorite", "watchlist", "skipped"}
+            or offset < 0
+            or not external_id
+        ):
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+
+        try:
+            self.database.clear_collection_flag(telegram_id, media_type, external_id, collection)
+        except ValueError:
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+        label = COLLECTION_LABELS.get(collection, collection)
+        await self.telegram.answer_callback_query(callback_id, f"🗑 Убрал из «{label}»")
+        await self._handle_collection_page(
+            chat_id,
+            telegram_id,
+            message_id,
+            f"col:{media_type}:{collection}:{offset}",
+        )
+
+    async def _start_search(self, chat_id: int, telegram_id: int, text: str) -> None:
+        self._pending_search.pop(telegram_id, None)
+        self._awaiting_search.pop(telegram_id, None)
+        parts = text.split(maxsplit=1)
+        query = parts[1].strip() if len(parts) > 1 else ""
+        if query:
+            self._pending_search[telegram_id] = query[:80]
+        await self.telegram.send_message(
+            chat_id,
+            search_media_text(),
+            reply_markup=search_media_keyboard(),
+        )
+
+    async def _handle_search_choice(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        message_id: int | None,
+        media_type: str,
+    ) -> None:
+        if media_type not in {"movie", "anime"}:
+            return
+        query = self._pending_search.pop(telegram_id, None)
+        if query:
+            await self._run_search(chat_id, telegram_id, media_type, query, message_id)
+            return
+        self._awaiting_search[telegram_id] = media_type
+        await self._replace_with_message(
+            chat_id,
+            message_id,
+            search_prompt_text(media_type),
+            search_cancel_keyboard(),
+        )
+
+    async def _run_search(
+        self,
+        chat_id: int,
+        telegram_id: int,
+        media_type: str,
+        query: str,
+        old_message_id: int | None = None,
+    ) -> None:
+        self._awaiting_search.pop(telegram_id, None)
+        self._pending_search.pop(telegram_id, None)
+        query = query.strip()[:80]
+        if not query:
+            await self._replace_with_message(
+                chat_id,
+                old_message_id,
+                search_prompt_text(media_type),
+                search_cancel_keyboard(),
+            )
+            return
+
+        await self.telegram.send_chat_action(chat_id, "typing")
+        items: list[Any] | None
+        if media_type == "movie":
+            try:
+                items = await self.recommendations.search(query)
+            except CinemetaError:
+                items = None
+        else:
+            try:
+                items = await self.anime_recommendations.search(query)
+            except ShikimoriError:
+                items = None
+
+        if items is None:
+            await self._replace_with_message(
+                chat_id,
+                old_message_id,
+                "😿 Поиск не удался. Попробуй ещё раз позже.",
+                search_media_keyboard(),
+            )
+            return
+        if not items:
+            await self._replace_with_message(
+                chat_id,
+                old_message_id,
+                search_no_results_text(media_type, query),
+                search_media_keyboard(),
+            )
+            return
+
+        if media_type == "movie":
+            text = movie_search_results_text(query, items)
+            external_ids = [item.imdb_id for item in items]
+        else:
+            text = anime_search_results_text(query, items)
+            external_ids = [str(item.shikimori_id) for item in items]
+        await self._replace_with_message(
+            chat_id,
+            old_message_id,
+            text,
+            search_results_keyboard(media_type, external_ids),
+        )
+
+    async def _handle_search_movie_view(
+        self,
+        callback_id: str,
+        chat_id: int,
+        data: str,
+    ) -> None:
+        imdb_id = data.partition(":")[2]
+        try:
+            movie = await self.recommendations.get_movie(imdb_id)
+        except (CinemetaError, ValueError):
+            await self.telegram.answer_callback_query(
+                callback_id,
+                "Не смог загрузить фильм. Попробуй ещё раз.",
+                show_alert=True,
+            )
+            return
+        await self.telegram.answer_callback_query(callback_id)
+        await self._send_movie_details(chat_id, movie, search_movie_keyboard(movie))
+
+    async def _handle_search_anime_view(
+        self,
+        callback_id: str,
+        chat_id: int,
+        data: str,
+    ) -> None:
+        raw_id = data.partition(":")[2]
+        try:
+            anime_id = int(raw_id)
+        except ValueError:
+            await self.telegram.answer_callback_query(callback_id, "Некорректная кнопка.")
+            return
+        try:
+            anime = await self.anime_recommendations.get_anime(anime_id)
+        except (ShikimoriError, ValueError):
+            await self.telegram.answer_callback_query(
+                callback_id,
+                "Не смог загрузить аниме. Попробуй ещё раз.",
+                show_alert=True,
+            )
+            return
+        await self.telegram.answer_callback_query(callback_id)
+        await self._send_anime_details(chat_id, anime, search_anime_keyboard(anime))
+
+    async def _send_anime_details(
+        self,
+        chat_id: int,
+        anime: Anime,
+        markup: dict[str, Any],
+    ) -> None:
         caption = anime_caption(anime)
-        markup = anime_keyboard(anime, genre_key)
         if anime.poster_url:
             try:
                 await self.telegram.send_photo(
@@ -484,6 +857,9 @@ class KinotykApp:
                     anime.shikimori_id,
                 )
         await self.telegram.send_message(chat_id, caption, reply_markup=markup)
+
+    async def _send_anime(self, chat_id: int, anime: Anime, genre_key: str) -> None:
+        await self._send_anime_details(chat_id, anime, anime_keyboard(anime, genre_key))
 
     async def _send_collection(self, chat_id: int, telegram_id: int) -> None:
         movie_stats = self.database.collection_stats(telegram_id, "movie")
@@ -564,6 +940,7 @@ class KinotykApp:
             offset,
             total,
             PAGE_SIZE,
+            media,
         )
         await self._replace_with_message(chat_id, message_id, text, markup)
 

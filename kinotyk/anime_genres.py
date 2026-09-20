@@ -6,24 +6,26 @@ from dataclasses import dataclass
 @dataclass(frozen=True, slots=True)
 class AnimeGenre:
     key: str
-    shikimori_name: str | None
+    genre_v2_id: int | None
     label: str
 
 
+# IDs are explicit because Shikimori's /api/genres still serves the legacy
+# taxonomy (no "Suspense") while /api/animes expects genre_v2 IDs.
 ANIME_GENRES: tuple[AnimeGenre, ...] = (
-    AnimeGenre("action", "Action", "⚔️ Экшен"),
-    AnimeGenre("adventure", "Adventure", "🧭 Приключения"),
-    AnimeGenre("comedy", "Comedy", "😂 Комедия"),
-    AnimeGenre("drama", "Drama", "🎭 Драма"),
-    AnimeGenre("fantasy", "Fantasy", "🧙 Фэнтези"),
-    AnimeGenre("romance", "Romance", "💕 Романтика"),
-    AnimeGenre("sci_fi", "Sci-Fi", "🚀 Фантастика"),
-    AnimeGenre("mystery", "Mystery", "🕵️ Тайна"),
-    AnimeGenre("sports", "Sports", "🏆 Спорт"),
-    AnimeGenre("suspense", "Suspense", "🔪 Триллер"),
-    AnimeGenre("psychological", "Psychological", "🧠 Психология"),
-    AnimeGenre("school", "School", "🏫 Школа"),
-    AnimeGenre("supernatural", "Supernatural", "👻 Сверхъестественное"),
+    AnimeGenre("action", 1, "⚔️ Экшен"),
+    AnimeGenre("adventure", 2, "🧭 Приключения"),
+    AnimeGenre("comedy", 4, "😂 Комедия"),
+    AnimeGenre("drama", 8, "🎭 Драма"),
+    AnimeGenre("fantasy", 10, "🧙 Фэнтези"),
+    AnimeGenre("romance", 22, "💕 Романтика"),
+    AnimeGenre("sci_fi", 24, "🚀 Фантастика"),
+    AnimeGenre("mystery", 7, "🕵️ Тайна"),
+    AnimeGenre("sports", 30, "🏆 Спорт"),
+    AnimeGenre("suspense", 117, "🔪 Триллер"),
+    AnimeGenre("psychological", 40, "🧠 Психология"),
+    AnimeGenre("school", 23, "🏫 Школа"),
+    AnimeGenre("supernatural", 37, "👻 Сверхъестественное"),
     AnimeGenre("any", None, "🎲 Что угодно"),
 )
 

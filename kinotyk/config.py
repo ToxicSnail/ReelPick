@@ -76,7 +76,7 @@ class Settings:
     user_agent: str = "Kinotyk/1.2 (Telegram movie and anime discovery bot)"
 
     @classmethod
-    def load(cls, env_file: str | Path = ".env") -> "Settings":
+    def load(cls, env_file: str | Path = ".env") -> Settings:
         _load_dotenv(Path(env_file))
 
         bot_token = os.getenv("BOT_TOKEN", "").strip()

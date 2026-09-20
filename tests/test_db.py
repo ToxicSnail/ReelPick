@@ -95,6 +95,71 @@ def test_anime_collection_is_separate_from_movies(tmp_path: Path) -> None:
     assert anime_items[0].title == "Пираты «Чёрной лагуны»"
 
 
+def test_clear_collection_flag_removes_item(tmp_path: Path) -> None:
+    from kinotyk.domain import Anime
+
+    db = Database(tmp_path / "remove.sqlite3")
+    db.init()
+    db.upsert_user(9, None, "User", "ru")
+    anime = Anime(
+        shikimori_id=2167,
+        title="Кланнад",
+        original_title="Clannad",
+        overview="Описание",
+        poster_url=None,
+        score=8.2,
+        year=2007,
+        genres=("Драма",),
+    )
+
+    db.toggle_anime_watchlist(9, anime)
+    assert db.collection_stats(9, "anime")["watchlist"] == 1
+
+    db.clear_collection_flag(9, "anime", "2167", "watchlist")
+
+    assert db.collection_stats(9, "anime")["watchlist"] == 0
+    assert "2167" not in db.excluded_media_ids(9, "anime")
+    items, total = db.list_collection(9, "watchlist", media_type="anime")
+    assert total == 0
+    assert items == []
+
+
+def test_clear_collection_flag_keeps_other_categories(tmp_path: Path) -> None:
+    db = Database(tmp_path / "keep.sqlite3")
+    db.init()
+    db.upsert_user(9, None, "User", "ru")
+    movie = make_movie()
+
+    db.toggle_favorite(9, movie)
+    db.mark_watched(9, movie)
+    assert db.collection_stats(9, "movie")["favorite"] == 1
+    assert db.collection_stats(9, "movie")["watched"] == 1
+
+    db.clear_collection_flag(9, "movie", movie.imdb_id, "favorite")
+
+    stats = db.collection_stats(9, "movie")
+    assert stats["favorite"] == 0
+    assert stats["watched"] == 1
+    watched, total = db.list_collection(9, "watched", media_type="movie")
+    assert total == 1
+    assert watched[0].external_id == movie.imdb_id
+
+    db.clear_collection_flag(9, "movie", movie.imdb_id, "watched")
+    assert db.collection_stats(9, "movie") == {
+        "watched": 0,
+        "favorite": 0,
+        "watchlist": 0,
+        "skipped": 0,
+    }
+
+    try:
+        db.clear_collection_flag(9, "movie", movie.imdb_id, "bogus")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("ValueError expected for unknown collection")
+
+
 def test_legacy_user_movies_are_migrated(tmp_path: Path) -> None:
     import sqlite3
 

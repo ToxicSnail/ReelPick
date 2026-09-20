@@ -265,6 +265,34 @@ class Database:
         )
         return self._toggle_flag(telegram_id, "anime", external_id, "watchlist")
 
+    def clear_collection_flag(
+        self,
+        telegram_id: int,
+        media_type: str,
+        external_id: str,
+        collection: str,
+    ) -> None:
+        if collection not in _ALLOWED_COLLECTIONS:
+            raise ValueError(f"Unknown collection: {collection}")
+        self._validate_media_type(media_type)
+        with self._connect() as conn:
+            conn.execute(
+                f"""
+                UPDATE user_media
+                SET {collection} = 0, updated_at = CURRENT_TIMESTAMP
+                WHERE telegram_id = ? AND media_type = ? AND external_id = ?
+                """,
+                (telegram_id, media_type, external_id),
+            )
+            conn.execute(
+                """
+                DELETE FROM user_media
+                WHERE telegram_id = ? AND media_type = ? AND external_id = ?
+                  AND watched = 0 AND skipped = 0 AND favorite = 0 AND watchlist = 0
+                """,
+                (telegram_id, media_type, external_id),
+            )
+
     def collection_stats(self, telegram_id: int, media_type: str | None = None) -> dict[str, int]:
         params: tuple[object, ...]
         media_filter = ""

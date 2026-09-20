@@ -35,6 +35,7 @@ def test_catalog_and_movie_parsing() -> None:
                             "poster": "https://example.test/poster.jpg",
                             "description": "A thief enters dreams.",
                             "genres": ["Action", "Sci-Fi", "Thriller"],
+                            "director": ["Christopher Nolan"],
                         }
                     },
                 )
@@ -56,5 +57,59 @@ def test_catalog_and_movie_parsing() -> None:
             assert movie.title == "Inception"
             assert movie.year == 2010
             assert movie.genres == ("Action", "Sci-Fi", "Thriller")
+            assert movie.director == "Christopher Nolan"
+            assert movie.studio is None
+
+    asyncio.run(scenario())
+
+
+def test_cinemeta_search_parsing() -> None:
+    async def scenario() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            assert "/catalog/movie/top/search=matrix.json" in str(request.url)
+            return httpx.Response(
+                200,
+                json={
+                    "metas": [
+                        {
+                            "id": "tt0133093",
+                            "name": "The Matrix",
+                            "imdbRating": "8.7",
+                            "releaseInfo": "1999",
+                        },
+                        {"id": "bad", "name": "Skip me"},
+                    ]
+                },
+            )
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = CinemetaClient(
+                http,
+                base_url="https://v3-cinemeta.strem.io",
+                timeout_seconds=2,
+            )
+            candidates = await client.search("matrix")
+
+        assert len(candidates) == 1
+        assert candidates[0].imdb_id == "tt0133093"
+        assert candidates[0].title == "The Matrix"
+        assert candidates[0].rating == 8.7
+        assert candidates[0].year == 1999
+
+    asyncio.run(scenario())
+
+
+def test_cinemeta_search_blank_query_returns_empty() -> None:
+    async def scenario() -> None:
+        def handler(request: httpx.Request) -> httpx.Response:
+            raise AssertionError("no request expected")
+
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            client = CinemetaClient(
+                http,
+                base_url="https://v3-cinemeta.strem.io",
+                timeout_seconds=2,
+            )
+            assert await client.search("   ") == []
 
     asyncio.run(scenario())

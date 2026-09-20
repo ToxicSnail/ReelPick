@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 
 from kinotyk.anime_genres import ANIME_GENRES
-from kinotyk.domain import Anime, Movie, StoredMedia
+from kinotyk.domain import Anime, AnimeCandidate, Movie, MovieCandidate, StoredMedia
 from kinotyk.genres import GENRES, translate_genres
 
 COLLECTION_LABELS = {
@@ -33,9 +33,45 @@ def main_menu_keyboard() -> dict:
         "inline_keyboard": [
             [_button("🎞 Найти фильм", "menu:movie")],
             [_button("🍥 Найти аниме", "menu:anime")],
+            [_button("🔍 Поиск", "menu:search")],
             [_button("📚 Моя коллекция", "menu:collection")],
         ]
     }
+
+
+def search_media_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [_button("🔍 Фильмы", "search:movie"), _button("🔍 Аниме", "search:anime")],
+            [_button("🏠 Главное меню", "nav:main")],
+        ]
+    }
+
+
+def search_cancel_keyboard() -> dict:
+    return {
+        "inline_keyboard": [
+            [_button("⛔ Отмена", "search:cancel")],
+            [_button("🏠 Главное меню", "nav:main")],
+        ]
+    }
+
+
+def search_results_keyboard(media_type: str, external_ids: list[str]) -> dict:
+    prefix = "smv" if media_type == "movie" else "sav"
+    rows: list[list[dict[str, str]]] = []
+    for start in range(0, len(external_ids), 4):
+        rows.append(
+            [
+                _button(str(index + 1), f"{prefix}:{external_id}")
+                for index, external_id in enumerate(
+                    external_ids[start : start + 4], start=start
+                )
+            ]
+        )
+    rows.append([_button("🔍 Новый поиск", "menu:search")])
+    rows.append([_button("🏠 Главное меню", "nav:main")])
+    return {"inline_keyboard": rows}
 
 
 def genres_keyboard() -> dict:
@@ -134,6 +170,7 @@ def collection_page_keyboard(
     offset: int,
     total: int,
     page_size: int = 8,
+    media: list[StoredMedia] | None = None,
 ) -> dict:
     nav: list[dict[str, str]] = []
     if offset > 0:
@@ -149,12 +186,84 @@ def collection_page_keyboard(
         )
 
     rows: list[list[dict[str, str]]] = []
+    if media:
+        prefix = "anv" if media_type == "anime" else "mvv"
+        for start in range(0, len(media), 4):
+            rows.append(
+                [
+                    _button(
+                        str(offset + index + 1),
+                        f"{prefix}:{item.external_id}:{collection}:{offset}",
+                    )
+                    for index, item in enumerate(media[start : start + 4], start=start)
+                ]
+            )
     if nav:
         rows.append(nav)
     rows.append([_button(MEDIA_LABELS[media_type], f"media:{media_type}")])
     rows.append([_button("📚 Вся коллекция", "menu:collection")])
     rows.append([_button("🏠 Главное меню", "nav:main")])
     return {"inline_keyboard": rows}
+
+
+def anime_details_keyboard(media_id: str, collection: str, offset: int) -> dict:
+    return {
+        "inline_keyboard": [
+            [_button("⬅️ К списку", f"col:anime:{collection}:{offset}")],
+            [
+                _button(
+                    f"🗑 Убрать из «{COLLECTION_LABELS[collection]}»",
+                    f"rmv:anime:{media_id}:{collection}:{offset}",
+                )
+            ],
+            [_button("🏠 Главное меню", "nav:main")],
+        ]
+    }
+
+
+def movie_details_keyboard(media_id: str, collection: str, offset: int) -> dict:
+    return {
+        "inline_keyboard": [
+            [_button("⬅️ К списку", f"col:movie:{collection}:{offset}")],
+            [
+                _button(
+                    f"🗑 Убрать из «{COLLECTION_LABELS[collection]}»",
+                    f"rmv:movie:{media_id}:{collection}:{offset}",
+                )
+            ],
+            [_button("🏠 Главное меню", "nav:main")],
+        ]
+    }
+
+
+def search_movie_keyboard(movie: Movie) -> dict:
+    movie_id = movie.imdb_id
+    return {
+        "inline_keyboard": [
+            [_button("✅ Уже смотрел", f"mv:w:{movie_id}:search")],
+            [
+                _button("❤️ В избранное", f"mv:f:{movie_id}:search"),
+                _button("📌 На потом", f"mv:l:{movie_id}:search"),
+            ],
+            [_button("🙅 Не интересно", f"mv:s:{movie_id}:search")],
+            [_button("🏠 Главное меню", "nav:main")],
+        ]
+    }
+
+
+def search_anime_keyboard(anime: Anime) -> dict:
+    anime_id = anime.shikimori_id
+    return {
+        "inline_keyboard": [
+            [_button("✅ Уже смотрел", f"an:w:{anime_id}:search")],
+            [
+                _button("❤️ В избранное", f"an:f:{anime_id}:search"),
+                _button("📌 На потом", f"an:l:{anime_id}:search"),
+            ],
+            [_button("🙅 Не интересно", f"an:s:{anime_id}:search")],
+            [_button("🏠 Главное меню", "nav:main")],
+        ]
+    }
 
 
 def main_menu_text(first_name: str | None = None) -> str:
@@ -186,6 +295,10 @@ def movie_caption(movie: Movie) -> str:
     lines.append(f"⭐ IMDb: <b>{rating}</b>")
     if movie.year:
         lines.append(f"📅 {movie.year}")
+    if movie.director:
+        lines.append(f"🎥 Режиссёр: <b>{html.escape(movie.director)}</b>")
+    if movie.studio:
+        lines.append(f"🏢 Студия: <b>{html.escape(movie.studio)}</b>")
     if movie.genres:
         genres = " · ".join(html.escape(item) for item in translate_genres(movie.genres)[:4])
         lines.append(f"🎭 {genres}")
@@ -216,6 +329,10 @@ def anime_caption(anime: Anime) -> str:
         lines.append("📺 " + " · ".join(html.escape(item) for item in details))
     if anime.year:
         lines.append(f"📅 {anime.year}")
+    if anime.director:
+        lines.append(f"🎥 Режиссёр: <b>{html.escape(anime.director)}</b>")
+    if anime.studio:
+        lines.append(f"🏢 Студия: <b>{html.escape(anime.studio)}</b>")
     if anime.genres:
         lines.append("🎭 " + " · ".join(html.escape(item) for item in anime.genres[:5]))
 
@@ -267,6 +384,45 @@ def collection_page_text(
     for index, item in enumerate(media, start=offset + 1):
         year = f" ({item.year})" if item.year else ""
         lines.append(f"{index}. <b>{html.escape(item.title)}</b>{year}")
+    return "\n".join(lines)
+
+
+def search_media_text() -> str:
+    return "🔍 <b>Что будем искать?</b>\n\nВыбери тип:"
+
+
+def search_prompt_text(media_type: str) -> str:
+    label = MEDIA_LABELS[media_type]
+    return (
+        f"{label} · 🔍 Поиск\n\n"
+        "Напиши название одним сообщением — я покажу подходящие варианты."
+    )
+
+
+def search_no_results_text(media_type: str, query: str) -> str:
+    label = MEDIA_LABELS[media_type]
+    return (
+        f"{label} · 🔍 Поиск\n\n"
+        f"По запросу «{html.escape(query)}» ничего не нашлось.\n\n"
+        "Попробуй изменить запрос."
+    )
+
+
+def movie_search_results_text(query: str, items: list[MovieCandidate]) -> str:
+    lines = [f"🎞 Поиск фильмов · «{html.escape(query)}» · <b>{len(items)}</b>", ""]
+    for index, item in enumerate(items, start=1):
+        year = f" ({item.year})" if item.year else ""
+        rating = f" · ⭐ {item.rating:.1f}" if item.rating is not None else ""
+        lines.append(f"{index}. <b>{html.escape(item.title)}</b>{year}{rating}")
+    return "\n".join(lines)
+
+
+def anime_search_results_text(query: str, items: list[AnimeCandidate]) -> str:
+    lines = [f"🍥 Поиск аниме · «{html.escape(query)}» · <b>{len(items)}</b>", ""]
+    for index, item in enumerate(items, start=1):
+        year = f" ({item.year})" if item.year else ""
+        score = f" · ⭐ {item.score:.2f}" if item.score is not None else ""
+        lines.append(f"{index}. <b>{html.escape(item.title)}</b>{year}{score}")
     return "\n".join(lines)
 
 

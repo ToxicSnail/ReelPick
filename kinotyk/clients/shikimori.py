@@ -40,7 +40,6 @@ class ShikimoriClient:
         self.timeout_seconds = timeout_seconds
         self.headers = {"User-Agent": user_agent, "Accept": "application/json"}
         self.max_overview_chars = max_overview_chars
-        self._genre_ids: dict[str, int] | None = None
 
     async def _get_json(self, path: str, *, params: dict[str, str] | None = None) -> Any:
         url = f"{self.base_url}{path}"
@@ -61,26 +60,6 @@ class ShikimoriClient:
                     await asyncio.sleep(0.3)
         raise ShikimoriError(f"Shikimori request failed: {path}") from last_error
 
-    async def genre_ids(self) -> dict[str, int]:
-        if self._genre_ids is not None:
-            return self._genre_ids
-
-        data = await self._get_json("/api/genres")
-        if not isinstance(data, list):
-            raise ShikimoriError("Shikimori genres response must be a list")
-
-        result: dict[str, int] = {}
-        for raw in data:
-            if not isinstance(raw, dict):
-                continue
-            name = str(raw.get("name") or "").strip()
-            genre_id = raw.get("id")
-            if not name or not isinstance(genre_id, int):
-                continue
-            result[name.casefold()] = genre_id
-        self._genre_ids = result
-        return result
-
     async def catalog(self, genre_key: str, *, page: int = 1) -> list[AnimeCandidate]:
         if page < 1:
             raise ValueError("page must be >= 1")
@@ -94,36 +73,23 @@ class ShikimoriClient:
             "order": "popularity",
             "status": "released",
         }
-        if genre.shikimori_name:
-            ids = await self.genre_ids()
-            genre_id = ids.get(genre.shikimori_name.casefold())
-            if genre_id is None:
-                raise ShikimoriError(f"Genre not found on Shikimori: {genre.shikimori_name}")
-            params["genre"] = str(genre_id)
+        if genre.genre_v2_id is not None:
+            params["genre_v2"] = str(genre.genre_v2_id)
 
         data = await self._get_json("/api/animes", params=params)
-        if not isinstance(data, list):
-            raise ShikimoriError("Shikimori anime catalog response must be a list")
+        return _parse_anime_candidates(data)
 
-        result: list[AnimeCandidate] = []
-        for raw in data:
-            if not isinstance(raw, dict):
-                continue
-            anime_id = raw.get("id")
-            if not isinstance(anime_id, int):
-                continue
-            title = str(raw.get("russian") or raw.get("name") or "").strip()
-            if not title:
-                continue
-            result.append(
-                AnimeCandidate(
-                    shikimori_id=anime_id,
-                    title=title,
-                    score=_parse_score(raw.get("score")),
-                    year=_parse_year(raw.get("aired_on") or raw.get("released_on")),
-                )
-            )
-        return result
+    async def search(self, query: str, *, limit: int = 20) -> list[AnimeCandidate]:
+        cleaned = query.strip()
+        if not cleaned:
+            return []
+        params = {
+            "search": cleaned,
+            "limit": str(max(1, min(limit, 50))),
+            "order": "popularity",
+        }
+        data = await self._get_json("/api/animes", params=params)
+        return _parse_anime_candidates(data)
 
     async def get_anime(self, anime_id: int) -> Anime:
         if anime_id <= 0:
@@ -156,6 +122,8 @@ class ShikimoriClient:
         duration = _positive_int(data.get("duration"))
         kind = str(data.get("kind") or "").strip() or None
         status = str(data.get("status") or "").strip() or None
+        studio = _parse_studio(data.get("studios"))
+        director = await self._director(anime_id)
 
         return Anime(
             shikimori_id=anime_id,
@@ -170,7 +138,42 @@ class ShikimoriClient:
             episodes=episodes,
             duration=duration,
             status=status,
+            studio=studio,
+            director=director,
         )
+
+    async def _director(self, anime_id: int) -> str | None:
+        try:
+            data = await self._get_json(f"/api/animes/{anime_id}/roles")
+        except ShikimoriError:
+            logger.warning("Could not load staff for anime %s", anime_id)
+            return None
+        return _parse_director(data)
+
+
+def _parse_anime_candidates(data: object) -> list[AnimeCandidate]:
+    if not isinstance(data, list):
+        raise ShikimoriError("Shikimori anime catalog response must be a list")
+
+    result: list[AnimeCandidate] = []
+    for raw in data:
+        if not isinstance(raw, dict):
+            continue
+        anime_id = raw.get("id")
+        if not isinstance(anime_id, int):
+            continue
+        title = str(raw.get("russian") or raw.get("name") or "").strip()
+        if not title:
+            continue
+        result.append(
+            AnimeCandidate(
+                shikimori_id=anime_id,
+                title=title,
+                score=_parse_score(raw.get("score")),
+                year=_parse_year(raw.get("aired_on") or raw.get("released_on")),
+            )
+        )
+    return result
 
 
 def _parse_score(value: object) -> float | None:
@@ -203,6 +206,37 @@ def _positive_int(value: object) -> int | None:
     except (TypeError, ValueError):
         return None
     return parsed if parsed > 0 else None
+
+
+def _parse_studio(value: object) -> str | None:
+    if not isinstance(value, list):
+        return None
+    studios = [item for item in value if isinstance(item, dict)]
+    real = [item for item in studios if item.get("real") is True]
+    for studio in real or studios:
+        name = str(studio.get("name") or "").strip()
+        if name:
+            return name
+    return None
+
+
+def _parse_director(data: object, *, limit: int = 2) -> str | None:
+    if not isinstance(data, list):
+        return None
+    names: list[str] = []
+    for raw in data:
+        if not isinstance(raw, dict):
+            continue
+        roles = raw.get("roles")
+        if not isinstance(roles, list) or "Director" not in roles:
+            continue
+        person = raw.get("person")
+        if not isinstance(person, dict):
+            continue
+        name = str(person.get("russian") or person.get("name") or "").strip()
+        if name:
+            names.append(name)
+    return ", ".join(names[:limit]) or None
 
 
 def _poster_url(data: dict[str, Any], base_url: str) -> str | None:

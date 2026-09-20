@@ -7,7 +7,7 @@ from collections import defaultdict
 from kinotyk.clients.cinemeta import CinemetaClient, CinemetaError
 from kinotyk.clients.localization import RussianLocalizer
 from kinotyk.db import Database
-from kinotyk.domain import Movie
+from kinotyk.domain import Movie, MovieCandidate
 from kinotyk.genres import GENRE_BY_KEY
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,12 @@ class RecommendationService:
         localized = await self.localizer.localize(movie)
         self._movie_cache[imdb_id] = localized
         return localized
+
+    async def search(self, query: str) -> list[MovieCandidate]:
+        cleaned = query.strip()
+        if not cleaned:
+            return []
+        return await self.cinemeta.search(cleaned)
 
     async def _find_movie(self, telegram_id: int, genre: str | None) -> Movie | None:
         excluded = self.database.excluded_movie_ids(telegram_id) | self._session_seen[telegram_id]

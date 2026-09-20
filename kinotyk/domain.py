@@ -21,8 +21,10 @@ class Movie:
     rating: float | None
     year: int | None
     genres: tuple[str, ...]
+    studio: str | None = None
+    director: str | None = None
 
-    def localized(self, *, title: str | None = None, overview: str | None = None) -> "Movie":
+    def localized(self, *, title: str | None = None, overview: str | None = None) -> Movie:
         return replace(
             self,
             title=(title or self.title).strip(),
@@ -52,6 +54,8 @@ class Anime:
     episodes: int | None = None
     duration: int | None = None
     status: str | None = None
+    studio: str | None = None
+    director: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
