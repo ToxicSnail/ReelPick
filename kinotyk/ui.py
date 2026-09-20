@@ -426,6 +426,17 @@ def anime_search_results_text(query: str, items: list[AnimeCandidate]) -> str:
     return "\n".join(lines)
 
 
+def global_stats_text(stats: dict[str, int]) -> str:
+    return (
+        "📊 <b>Статистика Кинотыка</b>\n\n"
+        f"👥 Пользователей: <b>{stats.get('users', 0)}</b>\n"
+        f"🎬 Фильмов сохранено: <b>{stats.get('movies', 0)}</b>\n"
+        f"🍥 Аниме сохранено: <b>{stats.get('anime', 0)}</b>\n"
+        f"✅ Просмотрено: <b>{stats.get('watched', 0)}</b>\n"
+        f"❤️ Избранное: <b>{stats.get('favorite', 0)}</b>"
+    )
+
+
 def help_text() -> str:
     return (
         "ℹ️ <b>Как пользоваться Кинотыком</b>\n\n"

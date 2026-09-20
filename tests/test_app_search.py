@@ -127,7 +127,11 @@ class FakeTelegram:
         self.messages.append({"chat_id": chat_id, "chat_action": action})
 
 
-def _build_app(tmp_path: Path) -> tuple[KinotykApp, Database, FakeTelegram]:
+def _build_app(
+    tmp_path: Path,
+    *,
+    admin_ids: tuple[int, ...] = (),
+) -> tuple[KinotykApp, Database, FakeTelegram]:
     database = Database(tmp_path / "db.sqlite")
     database.init()
     telegram = FakeTelegram()
@@ -142,6 +146,7 @@ def _build_app(tmp_path: Path) -> tuple[KinotykApp, Database, FakeTelegram]:
         database=database,
         recommendations=FakeMovieService(),  # type: ignore[arg-type]
         anime_recommendations=anime_service,  # type: ignore[arg-type]
+        admin_ids=admin_ids,
     )
     database.upsert_user(77, None, "Test", None)
     return app, database, telegram

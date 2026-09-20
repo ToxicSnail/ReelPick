@@ -57,6 +57,23 @@ def _get_int_tuple(name: str, default: str, *, min_value: int = 0) -> tuple[int,
     return tuple(values or [min_value])
 
 
+def _get_admin_ids(name: str = "ADMIN_IDS") -> tuple[int, ...]:
+    raw = os.getenv(name, "")
+    values: list[int] = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        try:
+            value = int(part)
+        except ValueError as exc:
+            raise ValueError(f"{name} contains non-integer {part!r}") from exc
+        if value <= 0:
+            raise ValueError(f"{name} values must be positive Telegram ids")
+        values.append(value)
+    return tuple(dict.fromkeys(values))
+
+
 @dataclass(frozen=True, slots=True)
 class Settings:
     bot_token: str
@@ -74,6 +91,7 @@ class Settings:
     max_overview_chars: int = 520
     log_level: str = "INFO"
     user_agent: str = "Kinotyk/1.2 (Telegram movie and anime discovery bot)"
+    admin_ids: tuple[int, ...] = ()
 
     @classmethod
     def load(cls, env_file: str | Path = ".env") -> Settings:
@@ -130,4 +148,5 @@ class Settings:
                 "HTTP_USER_AGENT",
                 "Kinotyk/1.2 (Telegram movie and anime discovery bot)",
             ),
+            admin_ids=_get_admin_ids(),
         )

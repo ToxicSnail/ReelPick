@@ -375,6 +375,28 @@ class Database:
         ]
         return media, total
 
+    def global_stats(self) -> dict[str, int]:
+        with self._connect() as conn:
+            users_row = conn.execute("SELECT COUNT(*) AS total FROM users").fetchone()
+            media_row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN media_type = 'movie' THEN 1 ELSE 0 END), 0) AS movies,
+                    COALESCE(SUM(CASE WHEN media_type = 'anime' THEN 1 ELSE 0 END), 0) AS anime,
+                    COALESCE(SUM(watched), 0) AS watched,
+                    COALESCE(SUM(favorite), 0) AS favorite
+                FROM user_media
+                """
+            ).fetchone()
+        assert users_row is not None and media_row is not None
+        return {
+            "users": int(users_row["total"]),
+            "movies": int(media_row["movies"]),
+            "anime": int(media_row["anime"]),
+            "watched": int(media_row["watched"]),
+            "favorite": int(media_row["favorite"]),
+        }
+
     @staticmethod
     def _validate_media_type(media_type: str) -> None:
         if media_type not in _ALLOWED_MEDIA_TYPES:

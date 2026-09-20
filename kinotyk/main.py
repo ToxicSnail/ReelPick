@@ -76,6 +76,7 @@ async def async_main() -> None:
             database=database,
             recommendations=recommendations,
             anime_recommendations=anime_recommendations,
+            admin_ids=settings.admin_ids,
         )
         await app.run()
 

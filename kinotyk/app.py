@@ -25,6 +25,7 @@ from kinotyk.ui import (
     collection_summary_text,
     genres_keyboard,
     genres_text,
+    global_stats_text,
     help_text,
     main_menu_keyboard,
     main_menu_text,
@@ -56,11 +57,13 @@ class KinotykApp:
         database: Database,
         recommendations: RecommendationService,
         anime_recommendations: AnimeRecommendationService,
+        admin_ids: tuple[int, ...] = (),
     ) -> None:
         self.telegram = telegram
         self.database = database
         self.recommendations = recommendations
         self.anime_recommendations = anime_recommendations
+        self.admin_ids = frozenset(admin_ids)
         self._tasks: set[asyncio.Task[Any]] = set()
         self._awaiting_search: dict[int, str] = {}
         self._pending_search: dict[int, str] = {}
@@ -125,6 +128,8 @@ class KinotykApp:
             await self._send_collection(chat_id, telegram_id)
         elif command == "/search":
             await self._start_search(chat_id, telegram_id, text)
+        elif command == "/stats":
+            await self._send_stats(chat_id, telegram_id)
         elif command == "/help":
             await self.telegram.send_message(
                 chat_id,
@@ -869,6 +874,11 @@ class KinotykApp:
             collection_summary_text(movie_stats, anime_stats),
             reply_markup=collection_keyboard(),
         )
+
+    async def _send_stats(self, chat_id: int, telegram_id: int) -> None:
+        if telegram_id not in self.admin_ids:
+            return
+        await self.telegram.send_message(chat_id, global_stats_text(self.database.global_stats()))
 
     async def _replace_with_collection(
         self,

@@ -160,6 +160,47 @@ def test_clear_collection_flag_keeps_other_categories(tmp_path: Path) -> None:
         raise AssertionError("ValueError expected for unknown collection")
 
 
+def test_global_stats(tmp_path: Path) -> None:
+    from kinotyk.domain import Anime
+
+    db = Database(tmp_path / "global.sqlite3")
+    db.init()
+    assert db.global_stats() == {
+        "users": 0,
+        "movies": 0,
+        "anime": 0,
+        "watched": 0,
+        "favorite": 0,
+    }
+
+    movie = make_movie()
+    anime = Anime(
+        shikimori_id=2167,
+        title="Кланнад",
+        original_title="Clannad",
+        overview="Описание",
+        poster_url=None,
+        score=8.2,
+        year=2007,
+        genres=("Драма",),
+    )
+
+    db.upsert_user(1, None, "One", "ru")
+    db.upsert_user(2, None, "Two", "ru")
+    db.toggle_watchlist(1, movie)
+    db.mark_watched(1, movie)
+    db.toggle_anime_favorite(2, anime)
+    db.mark_anime_watched(2, anime)
+
+    assert db.global_stats() == {
+        "users": 2,
+        "movies": 1,
+        "anime": 1,
+        "watched": 2,
+        "favorite": 1,
+    }
+
+
 def test_legacy_user_movies_are_migrated(tmp_path: Path) -> None:
     import sqlite3
 
